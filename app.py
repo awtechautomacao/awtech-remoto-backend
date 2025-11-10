@@ -1,59 +1,62 @@
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
-import redis
 import json
+import redis
+import ssl
 import os
 
 app = Flask(__name__)
 CORS(app)
 
-REDIS_URL = "rediss://red-d48tjmn5r7bs738r61p0:pOnjCrQANSkjZxfv761DPj5UNxkOgDmc@ohio-keyvalue.render.com:6379"
+REDIS_URL = os.getenv("REDIS_URL")
 
-r = redis.from_url(
+if not REDIS_URL:
+    raise Exception("A variável REDIS_URL não foi definida no Render!")
+
+r = redis.Redis.from_url(
     REDIS_URL,
-    decode_responses=True,
-    ssl=True
+    ssl_cert_reqs=ssl.CERT_NONE
 )
 
-KEY = "perfis_awtech"
+KEY = "profiles"
 
 def load_profiles():
-    data = r.get(KEY)
-    if data:
+    try:
+        data = r.get(KEY)
+        if not data:
+            return []
         return json.loads(data)
-    return []
+    except Exception as e:
+        print("Erro ao carregar perfis:", e)
+        return []
 
-def save_profiles(profiles):
-    r.set(KEY, json.dumps(profiles))
+def save_profiles(lista):
+    try:
+        r.set(KEY, json.dumps(lista))
+    except Exception as e:
+        print("Erro ao salvar perfis:", e)
+
+@app.route("/")
+def home():
+    return jsonify({"status": "API ONLINE", "redis": True})
 
 @app.route("/perfis", methods=["GET"])
 def listar():
     return jsonify(load_profiles())
 
 @app.route("/perfis", methods=["POST"])
-def salvar():
-    profiles = load_profiles()
-    new = request.json
-    for p in profiles:
-        if p["nome"] == new["nome"]:
-            return jsonify({"error": "Perfil já existe"}), 400
-    profiles.append(new)
-    save_profiles(profiles)
-    return jsonify({"status": "ok"})
+def adicionar():
+    novo = request.json
+    lista = load_profiles()
+    lista.append(novo)
+    save_profiles(lista)
+    return jsonify({"status": "salvo", "item": novo}), 201
 
-@app.route("/perfis/<nome>", methods=["DELETE"])
-def excluir(nome):
-    profiles = load_profiles()
-    new_list = [p for p in profiles if p["nome"] != nome]
-    if len(new_list) == len(profiles):
-        return jsonify({"error": "Perfil não encontrado"}), 404
-    save_profiles(new_list)
-    return jsonify({"status": "ok"})
-
-@app.route("/")
-def home():
-    return "API Awtech Remoto - OK", 200
+@app.route("/perfis", methods=["DELETE"])
+def limpar():
+    r.delete(KEY)
+    return jsonify({"status": "limpo"}), 200
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
